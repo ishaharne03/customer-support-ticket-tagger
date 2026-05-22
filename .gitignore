@@ -4,3 +4,5 @@ ticket-classifier/
 results/
 *.bin
 *.safetensors
+backend/qdrant_storage/
+backend/metrics.db
