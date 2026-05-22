@@ -1,0 +1,7 @@
+*.ipynb
+.env
+*.env
+ticket-classifier/
+results/
+*.bin
+*.safetensors
