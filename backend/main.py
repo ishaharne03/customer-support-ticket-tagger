@@ -3,7 +3,7 @@
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
+from vector_store import qdrant, COLLECTION_NAME
 from schemas import ClassifyRequest, ClassifyResponse
 from schemas import CorrectionRequest, CorrectionResponse
 from schemas import MetricsResponse
@@ -125,6 +125,40 @@ async def add_correction(request: CorrectionRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ── GET /corrections ──────────────────────────────────────────────────────────
+@app.get("/corrections")
+async def get_corrections():
+    """
+    Returns all corrections stored in Qdrant.
+    Used by the frontend correction history panel.
+    Scrolls through all points in the collection and returns payloads.
+    """
+    try:
+        collection_info = qdrant.get_collection(COLLECTION_NAME)
+        if collection_info.points_count == 0:
+            return {"corrections": []}
+
+        # scroll() retrieves all points without a query vector
+        # limit=100 is enough for a portfolio project
+        results, _ = qdrant.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=100,
+            with_payload=True,
+            with_vectors=False    # we don't need vectors, just metadata
+        )
+
+        corrections = [
+            {
+                "ticket_text":      r.payload["ticket_text"],
+                "wrong_category":   r.payload["wrong_category"],
+                "correct_category": r.payload["correct_category"]
+            }
+            for r in results
+        ]
+        return {"corrections": corrections}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ── GET /metrics ──────────────────────────────────────────────────────────────
 @app.get("/metrics", response_model=MetricsResponse)
