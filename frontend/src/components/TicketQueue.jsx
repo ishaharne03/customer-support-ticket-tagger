@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Send, Loader2, Inbox, RefreshCw, SlidersHorizontal } from 'lucide-react'
-import axios from 'axios'
+import api from '../api'
 import TicketCard from './TicketCard'
 import TicketDetail from './TicketDetail'
 
@@ -68,7 +68,7 @@ export default function TicketQueue() {
     setLoading(true)
     setError('')
     try {
-      const response = await axios.post('/api/classify', {
+      const response = await api.post('/classify', {
         ticket_text: text
       })
       setTickets(prev => [{

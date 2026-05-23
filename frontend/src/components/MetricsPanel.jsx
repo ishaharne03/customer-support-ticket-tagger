@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react'
 import { RefreshCw, Loader2 } from 'lucide-react'
-import axios from 'axios'
+import api from '../api'
 
 export default function MetricsPanel() {
   const [metrics, setMetrics]   = useState(null)
@@ -14,7 +14,7 @@ export default function MetricsPanel() {
     setLoading(true)
     setError('')
     try {
-      const response = await axios.get('/api/metrics')
+      const response = await api.get('/metrics')
       setMetrics(response.data)
     } catch (err) {
       setError('Failed to load metrics. Is the API running?')

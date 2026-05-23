@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react'
 import { History, RefreshCw, Loader2, ArrowRight } from 'lucide-react'
-import axios from 'axios'
+import api from '../api'
 
 export default function CorrectionHistory() {
   const [corrections, setCorrections] = useState([])
@@ -16,7 +16,7 @@ export default function CorrectionHistory() {
     setLoading(true)
     setError('')
     try {
-      const response = await axios.get('/api/corrections')
+      const response = await api.get('/corrections')
       setCorrections(response.data.corrections)
     } catch (err) {
       setError('Failed to load corrections. Is the API running?')

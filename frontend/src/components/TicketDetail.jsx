@@ -3,7 +3,7 @@
 
 import { useState } from 'react'
 import { X, Send, AlertCircle } from 'lucide-react'
-import axios from 'axios'
+import api from '../api'
 
 const LABEL_CLASSES = [
   "Billing and Payments",
@@ -49,9 +49,9 @@ export default function TicketDetail({ ticket, onClose, onCorrectionSubmitted })
     setError('')
 
     try {
-      await axios.patch('/api/corrections', {
+      await api.patch('/api/corrections', {
         ticket_text:      ticket.ticket_text,
-        wrong_category:   ticket.category,
+        wrong_category:   ticket.distilbert_prediction,
         correct_category: selectedCorrection
       })
       setSubmitted(true)
