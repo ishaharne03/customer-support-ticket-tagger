@@ -1,20 +1,26 @@
+# ── backend/main.py ───────────────────────────────────────────────────────────
 # FastAPI application — defines all API routes
-# This file only handles HTTP — no ML logic lives here
+# All API routes use /api prefix so static file mount doesn't conflict
+# Static mount is last — catches everything not matched by API routes
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from vector_store import qdrant, COLLECTION_NAME
-from schemas import ClassifyRequest, ClassifyResponse
-from schemas import CorrectionRequest, CorrectionResponse
-from schemas import MetricsResponse
-from classifier import classify_ticket
-from vector_store import (
+import os
+
+from backend.schemas import ClassifyRequest, ClassifyResponse
+from backend.schemas import CorrectionRequest, CorrectionResponse
+from backend.schemas import MetricsResponse
+from backend.classifier import classify_ticket
+from backend.vector_store import (
     store_correction,
     retrieve_corrections,
     build_correction_context,
-    get_correction_count
+    get_correction_count,
+    qdrant,
+    COLLECTION_NAME
 )
-from database import init_db, log_classification, get_metrics
+from backend.database import init_db, log_classification, get_metrics
 
 # ── App initialization ────────────────────────────────────────────────────────
 app = FastAPI(
@@ -24,35 +30,37 @@ app = FastAPI(
 )
 
 # ── CORS middleware ───────────────────────────────────────────────────────────
-# Required so the React frontend (running on localhost:5173) can call this API
-# (running on localhost:8000) — browsers block cross-origin requests by default
-# Interview answer: "CORS must be explicitly enabled for browser-based clients —
-# server-to-server calls don't need it, only browser requests do"
+# Required so browser-based clients can call the API
+# allow_origins=["*"] is fine for portfolio — tighten in real production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],      # tighten this to specific domain in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ── Startup event ─────────────────────────────────────────────────────────────
-# Runs once when the server starts — initializes the SQLite database
-# Model and embedder are loaded at module import time in classifier.py
-# and vector_store.py — so they're ready before the first request
 @app.on_event("startup")
 async def startup_event():
     init_db()
     print("API ready.")
 
-# ── Health check ─────────────────────────────────────────────────────────────
-@app.get("/")
-async def root():
-    """Basic health check — confirms API is running"""
+# ── API Router with /api prefix ───────────────────────────────────────────────
+# All API routes live under /api so the static file mount at /
+# doesn't intercept them
+# Interview answer: "The /api prefix separates data endpoints from
+# static file serving — a standard pattern for single-server SPAs"
+router = APIRouter(prefix="/api")
+
+# ── GET /api/health ───────────────────────────────────────────────────────────
+@router.get("/health")
+async def health():
+    """Health check — confirms API is running"""
     return {"status": "ok", "message": "Ticket Tagger API is running"}
 
-# ── POST /classify ────────────────────────────────────────────────────────────
-@app.post("/classify", response_model=ClassifyResponse)
+# ── POST /api/classify ────────────────────────────────────────────────────────
+@router.post("/classify", response_model=ClassifyResponse)
 async def classify(request: ClassifyRequest):
     """
     Main classification endpoint.
@@ -61,56 +69,32 @@ async def classify(request: ClassifyRequest):
     3. Run full classification pipeline
     4. Log result to SQLite
     5. Return structured response
-
-    Interview answer: "The endpoint is stateless — all state lives in
-    Qdrant and SQLite. Any request can be replayed independently."
     """
-    # Validate input — empty ticket text is useless
     if not request.ticket_text.strip():
         raise HTTPException(
             status_code=400,
             detail="ticket_text cannot be empty"
         )
-
     try:
-        # Step 1 — Check for similar past corrections
-        corrections      = retrieve_corrections(request.ticket_text)
-        correction_ctx   = build_correction_context(corrections)
-
-        # Step 2 — Run full pipeline
-        result = classify_ticket(
+        corrections    = retrieve_corrections(request.ticket_text)
+        correction_ctx = build_correction_context(corrections)
+        result         = classify_ticket(
             ticket_text=request.ticket_text,
             correction_context=correction_ctx
         )
-
-        # Step 3 — Log to SQLite for metrics tracking
         log_classification(result, request.ticket_text)
-
-        # Step 4 — Return response
         return ClassifyResponse(**result)
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ── PATCH /corrections ────────────────────────────────────────────────────────
-@app.patch("/corrections", response_model=CorrectionResponse)
+# ── PATCH /api/corrections ────────────────────────────────────────────────────
+@router.patch("/corrections", response_model=CorrectionResponse)
 async def add_correction(request: CorrectionRequest):
     """
     Operator correction endpoint.
-    Stores the corrected ticket in Qdrant as a vector embedding.
+    Stores corrected ticket in Qdrant as a vector embedding.
     Future similar tickets will retrieve this correction before classifying.
-
-    Interview answer: "PATCH is semantically correct here — we are
-    partially updating the system's knowledge, not creating a new resource"
     """
-    # Validate categories are not the same
-    if request.wrong_category == request.correct_category:
-        raise HTTPException(
-            status_code=400,
-            detail="wrong_category and correct_category cannot be the same"
-        )
-
     try:
         point_id = store_correction(
             ticket_text=request.ticket_text,
@@ -121,32 +105,26 @@ async def add_correction(request: CorrectionRequest):
             status="stored",
             message=f"Correction stored. ID: {point_id}"
         )
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── GET /corrections ──────────────────────────────────────────────────────────
-@app.get("/corrections")
+# ── GET /api/corrections ──────────────────────────────────────────────────────
+@router.get("/corrections")
 async def get_corrections():
     """
     Returns all corrections stored in Qdrant.
     Used by the frontend correction history panel.
-    Scrolls through all points in the collection and returns payloads.
     """
     try:
-        collection_info = qdrant.get_collection(COLLECTION_NAME)
-        if collection_info.points_count == 0:
+        if qdrant.get_collection(COLLECTION_NAME).points_count == 0:
             return {"corrections": []}
 
-        # scroll() retrieves all points without a query vector
-        # limit=100 is enough for a portfolio project
         results, _ = qdrant.scroll(
             collection_name=COLLECTION_NAME,
             limit=100,
             with_payload=True,
-            with_vectors=False    # we don't need vectors, just metadata
+            with_vectors=False
         )
-
         corrections = [
             {
                 "ticket_text":      r.payload["ticket_text"],
@@ -156,20 +134,15 @@ async def get_corrections():
             for r in results
         ]
         return {"corrections": corrections}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── GET /metrics ──────────────────────────────────────────────────────────────
-@app.get("/metrics", response_model=MetricsResponse)
+# ── GET /api/metrics ──────────────────────────────────────────────────────────
+@router.get("/metrics", response_model=MetricsResponse)
 async def metrics():
     """
     Live metrics endpoint.
-    Aggregates classification history from SQLite and correction
-    count from Qdrant and returns combined stats.
-
-    Interview answer: "Metrics are computed on the fly from the database —
-    no separate metrics store needed at this scale"
+    Aggregates from SQLite and Qdrant.
     """
     try:
         db_metrics = get_metrics()
@@ -184,3 +157,16 @@ async def metrics():
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ── Register router ───────────────────────────────────────────────────────────
+app.include_router(router)
+
+# ── Serve React frontend ──────────────────────────────────────────────────────
+# Must be LAST — StaticFiles catches everything not matched by API routes above
+# In production FastAPI serves the built React files directly
+# Interview answer: "For single-instance deployment, serving static files
+# from FastAPI is simpler than adding Nginx. At scale I would use a CDN."
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+if os.path.exists(STATIC_DIR):
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

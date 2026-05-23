@@ -1,7 +1,6 @@
 fastapi
 uvicorn[standard]
 transformers
-torch
 sentence-transformers
 qdrant-client
 openai
@@ -9,3 +8,4 @@ scikit-learn
 python-dotenv
 numpy
 pydantic
+aiofiles

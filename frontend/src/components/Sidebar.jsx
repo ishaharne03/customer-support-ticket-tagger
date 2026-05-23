@@ -43,7 +43,6 @@ export default function Sidebar({ activePage, setActivePage }) {
       {/* Footer */}
       <div className="px-6 py-4 border-t border-slate-800">
         <p className="text-xs text-slate-500">DistilBERT + GPT-4o-mini</p>
-        <p className="text-xs text-slate-600">Phase 5 — FastAPI Backend</p>
       </div>
     </aside>
   )
